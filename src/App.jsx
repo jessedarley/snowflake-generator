@@ -1,10 +1,13 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
-import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { buildSnowflake2D, mulberry32, seedFromString } from "./geometry.js";
+import { buildSnowflakeMeshFromSegments } from "./snowflake/sdfOutline.js";
+import logo from "./assets/logo.png";
+
+const SHOW_HALF_ONE_BRANCH = false;
 
 function sanitizeNamePart(value) {
   const safe = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
@@ -13,70 +16,24 @@ function sanitizeNamePart(value) {
 
 function makeSnowflakeMeshGeometry(seed, complexity, thickness) {
   const rand = mulberry32(seed);
-  const depthRand = mulberry32((seed ^ 0x9e3779b9) >>> 0);
   const safeThickness = Math.max(2, Math.min(20, Number(thickness) || 10));
   const geometry2d = buildSnowflake2D(rand, complexity, safeThickness);
-  const strokeHalfWidth = 0.08 + safeThickness * 0.03;
-  const baseDepth = Math.max(1.2, safeThickness * 0.75);
-  const minSegmentLen = 0.06;
-  const parts = [];
-
-  for (let i = 0; i < geometry2d.segments.length; i += 1) {
-    const [a, b] = geometry2d.segments[i];
-    const start = new THREE.Vector3(a[0], a[1], 0);
-    const end = new THREE.Vector3(b[0], b[1], 0);
-    const delta = new THREE.Vector3().subVectors(end, start);
-    const length = delta.length();
-    if (length < minSegmentLen) {
-      continue;
-    }
-
-    const dir2 = new THREE.Vector2(end.x - start.x, end.y - start.y).normalize();
-    const normal2 = new THREE.Vector2(-dir2.y, dir2.x).multiplyScalar(strokeHalfWidth);
-
-    const p0 = new THREE.Vector2(start.x + normal2.x, start.y + normal2.y);
-    const p1 = new THREE.Vector2(start.x - normal2.x, start.y - normal2.y);
-    const p2 = new THREE.Vector2(end.x - normal2.x, end.y - normal2.y);
-    const p3 = new THREE.Vector2(end.x + normal2.x, end.y + normal2.y);
-
-    const shape = new THREE.Shape([p0, p1, p2, p3]);
-    const segmentDepth = Math.max(0.8, baseDepth * (0.7 + depthRand() * 0.8));
-    const zOffset = (depthRand() - 0.5) * baseDepth * 0.45;
-    const totalWidth = strokeHalfWidth * 2;
-    const targetChamfer = totalWidth * 0.25;
-    const bevelSize = Math.min(targetChamfer, strokeHalfWidth * 0.9);
-    const bevelThickness = Math.min(targetChamfer, segmentDepth * 0.35);
-    const part = new THREE.ExtrudeGeometry(shape, {
-      depth: segmentDepth,
-      bevelEnabled: true,
-      bevelSize,
-      bevelThickness,
-      bevelSegments: 2,
-      steps: 1,
-    });
-    part.translate(0, 0, -segmentDepth / 2 + zOffset);
-    parts.push(part);
-  }
-
-  if (parts.length === 0) {
-    const fallback = new THREE.BoxGeometry(
-      strokeHalfWidth * 2,
-      strokeHalfWidth * 2,
-      baseDepth
-    );
-    parts.push(fallback);
-  }
-
-  const merged = mergeGeometries(parts, true);
-  parts.forEach((g) => g.dispose());
-
-  merged.computeBoundingBox();
-  const box = merged.boundingBox;
+  const branchHalfSegments = geometry2d.segments.filter(([a, b]) => {
+    const mx = (a[0] + b[0]) * 0.5;
+    const my = (a[1] + b[1]) * 0.5;
+    const theta = Math.atan2(my, mx);
+    const inSingleBranch = Math.abs(theta) <= Math.PI / 6;
+    const inUpperHalf = my >= -1e-6;
+    return inSingleBranch && inUpperHalf;
+  });
+  const sourceSegments = SHOW_HALF_ONE_BRANCH ? branchHalfSegments : geometry2d.segments;
+  const merged = buildSnowflakeMeshFromSegments(sourceSegments, safeThickness);
+  const box = merged.boundingBox || new THREE.Box3().setFromBufferAttribute(merged.attributes.position);
   const size = new THREE.Vector3();
   box.getSize(size);
   const baseDiameterXY = Math.max(size.x, size.y, 1e-6);
   const targetDiameterMm = 110;
-  const targetDepthMm = targetDiameterMm / 10;
+  const targetDepthMm = targetDiameterMm / 20;
   const scaleXY = targetDiameterMm / baseDiameterXY;
 
   merged.scale(scaleXY, scaleXY, scaleXY);
@@ -86,6 +43,15 @@ function makeSnowflakeMeshGeometry(seed, complexity, thickness) {
   const currentDepth = Math.max(scaledSize.z, 1e-6);
   const scaleZ = targetDepthMm / currentDepth;
   merged.scale(1, 1, scaleZ);
+  // Keep local thickness from relief variation above 2 mm.
+  const minHalfDepthMm = 1;
+  const pos = merged.attributes.position;
+  for (let i = 0; i < pos.count; i += 1) {
+    const z = pos.getZ(i);
+    const zSign = z >= 0 ? 1 : -1;
+    pos.setZ(i, zSign * Math.max(Math.abs(z), minHalfDepthMm));
+  }
+  pos.needsUpdate = true;
   merged.computeVertexNormals();
   merged.computeBoundingBox();
 
@@ -153,14 +119,29 @@ export default function App() {
     return { diameter, depth, triCount };
   }, [meshGeometry]);
 
-  const handleGenerate = () => {
-    setGenerated({
+  const commitNames = () => {
+    setGenerated((prev) => ({
+      ...prev,
       firstName,
       lastName,
+    }));
+  };
+
+  const handleNameKeyDown = (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitNames();
+      e.currentTarget.blur();
+    }
+  };
+
+  useEffect(() => {
+    setGenerated((prev) => ({
+      ...prev,
       complexity: Math.max(1, Math.min(10, Number(complexity) || 1)),
       thickness: Math.max(2, Math.min(20, Number(thickness) || 2)),
-    });
-  };
+    }));
+  }, [complexity, thickness]);
 
   const handleExport = () => {
     if (!meshRef.current) {
@@ -171,96 +152,199 @@ export default function App() {
   };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        gap: "0.9rem",
-        fontFamily: "sans-serif",
-        padding: "1rem",
-      }}
-    >
-      <h1 style={{ margin: 0 }}>Deterministic Snowflake</h1>
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(2, minmax(180px, 260px))",
-          gap: "0.7rem 1rem",
-          width: "min(100%, 560px)",
-        }}
-      >
-        <label>
-          First Name
-          <input
-            value={firstName}
-            onChange={(e) => setFirstName(e.target.value)}
-            style={{ width: "100%" }}
-          />
-        </label>
-        <label>
-          Last Name
-          <input
-            value={lastName}
-            onChange={(e) => setLastName(e.target.value)}
-            style={{ width: "100%" }}
-          />
-        </label>
-        <label>
-          Complexity: {complexity}
-          <input
-            type="range"
-            min="1"
-            max="10"
-            value={complexity}
-            onChange={(e) => setComplexity(Number(e.target.value))}
-            style={{ width: "100%" }}
-          />
-        </label>
-        <label>
-          Thickness: {thickness}
-          <input
-            type="range"
-            min="1"
-            max="20"
-            value={thickness}
-            onChange={(e) => setThickness(Number(e.target.value))}
-            style={{ width: "100%" }}
-          />
-        </label>
+    <div className="app-shell">
+      <style>{`
+        :root {
+          --ice-0: #f4f9ff;
+          --ice-1: #e8f1fb;
+          --ice-2: #d8e8f5;
+          --ice-3: #96adc2;
+          --night-0: #0d1c2a;
+          --night-1: #143247;
+          --frost: #f7fbff;
+        }
+        * { box-sizing: border-box; }
+        .app-shell {
+          min-height: 100vh;
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 1.1rem;
+          padding: 1.2rem;
+          color: var(--night-0);
+          font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+          background:
+            radial-gradient(circle at 18% 16%, rgba(255,255,255,0.75), transparent 28%),
+            radial-gradient(circle at 86% 4%, rgba(180, 208, 232, 0.36), transparent 26%),
+            repeating-linear-gradient(115deg, rgba(255,255,255,0.26) 0, rgba(255,255,255,0.26) 1px, transparent 1px, transparent 10px),
+            linear-gradient(155deg, var(--ice-0) 0%, var(--ice-1) 44%, var(--ice-2) 100%);
+        }
+        .title {
+          margin: 0.1rem 0 0;
+          text-align: center;
+          letter-spacing: 0.04em;
+          font-size: clamp(1.35rem, 2.4vw, 2rem);
+          font-weight: 650;
+          color: var(--night-1);
+          text-transform: uppercase;
+        }
+        .brand {
+          display: flex;
+          align-items: center;
+          gap: 0.8rem;
+        }
+        .brand-logo {
+          width: clamp(56px, 8vw, 84px);
+          height: clamp(56px, 8vw, 84px);
+          object-fit: cover;
+          object-position: 50% 24%;
+          border-radius: 14px;
+          border: 1px solid rgba(14, 58, 85, 0.18);
+          background: rgba(255, 255, 255, 0.7);
+          box-shadow: 0 6px 16px rgba(6, 31, 48, 0.1);
+        }
+        .controls {
+          width: min(100%, 760px);
+          padding: 0.95rem;
+          border: 1px solid rgba(20, 50, 71, 0.12);
+          border-radius: 16px;
+          backdrop-filter: blur(2px);
+          background: linear-gradient(180deg, rgba(247, 251, 255, 0.84), rgba(247, 251, 255, 0.62));
+          box-shadow: 0 8px 26px rgba(7, 27, 43, 0.08);
+        }
+        .control-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 0.8rem 0.95rem;
+        }
+        .field {
+          display: flex;
+          flex-direction: column;
+          gap: 0.3rem;
+          font-size: 0.86rem;
+          color: #27475e;
+        }
+        .field input[type="text"] {
+          width: 100%;
+          border: 1px solid rgba(28, 67, 95, 0.24);
+          border-radius: 10px;
+          padding: 0.52rem 0.62rem;
+          background: rgba(255,255,255,0.86);
+          color: #10283c;
+          outline: none;
+        }
+        .field input[type="text"]:focus {
+          border-color: #6f95b3;
+          box-shadow: 0 0 0 2px rgba(111, 149, 179, 0.18);
+        }
+        .field input[type="range"] {
+          width: 100%;
+          accent-color: #4e7593;
+        }
+        .btn {
+          border: none;
+          border-radius: 999px;
+          padding: 0.55rem 0.98rem;
+          font-weight: 650;
+          letter-spacing: 0.01em;
+          cursor: pointer;
+        }
+        .btn-export {
+          color: #153147;
+          background: linear-gradient(145deg, #d8e8f5, #ecf5fc);
+          border: 1px solid rgba(21, 49, 71, 0.15);
+        }
+        .scene-wrap {
+          width: min(94vw, 860px);
+          height: min(66vh, 640px);
+          position: relative;
+          border-radius: 20px;
+          overflow: hidden;
+          border: 1px solid rgba(19, 53, 77, 0.15);
+          background: linear-gradient(165deg, rgba(247, 251, 255, 0.58), rgba(230, 240, 250, 0.36));
+          box-shadow: inset 0 0 50px rgba(255,255,255,0.36), 0 10px 34px rgba(8, 32, 49, 0.12);
+        }
+        .export-ghost {
+          position: absolute;
+          right: 0.8rem;
+          bottom: 0.72rem;
+          z-index: 2;
+          pointer-events: none;
+          font-size: 0.74rem;
+          line-height: 1.35;
+          color: rgba(13, 28, 42, 0.34);
+          text-align: right;
+          text-shadow: 0 1px rgba(255,255,255,0.35);
+          user-select: none;
+        }
+        @media (max-width: 740px) {
+          .control-grid { grid-template-columns: 1fr; }
+          .scene-wrap { height: min(60vh, 520px); }
+          .export-ghost { font-size: 0.69rem; max-width: 68vw; }
+        }
+      `}</style>
+
+      <div className="brand">
+        <img className="brand-logo" src={logo} alt="Snowflake Generator logo" />
+        <h1 className="title">Winter Snowflake Studio</h1>
       </div>
 
-      <div style={{ display: "flex", gap: "0.6rem" }}>
-        <button type="button" onClick={handleGenerate}>
-          Generate
-        </button>
-        <button type="button" onClick={handleExport}>
-          Export STL
-        </button>
-      </div>
+      <section className="controls">
+        <div className="control-grid">
+          <label className="field">
+            First Name
+            <input
+              type="text"
+              value={firstName}
+              onChange={(e) => setFirstName(e.target.value)}
+              onBlur={commitNames}
+              onKeyDown={handleNameKeyDown}
+            />
+          </label>
+          <label className="field">
+            Last Name
+            <input
+              type="text"
+              value={lastName}
+              onChange={(e) => setLastName(e.target.value)}
+              onBlur={commitNames}
+              onKeyDown={handleNameKeyDown}
+            />
+          </label>
+          <label className="field">
+            Complexity: {complexity}
+            <input
+              type="range"
+              min="1"
+              max="10"
+              value={complexity}
+              onChange={(e) => setComplexity(Number(e.target.value))}
+            />
+          </label>
+          <label className="field">
+            Thickness: {thickness}
+            <input
+              type="range"
+              min="1"
+              max="20"
+              value={thickness}
+              onChange={(e) => setThickness(Number(e.target.value))}
+            />
+          </label>
+        </div>
+      </section>
 
-      <div
-        style={{
-          width: "min(100%, 560px)",
-          fontSize: "0.82rem",
-          border: "1px solid #d9dce2",
-          borderRadius: "8px",
-          padding: "0.5rem 0.6rem",
-          background: "#fafbfe",
-        }}
-      >
-        <div>Export info</div>
-        <div>Seed: {seedText}</div>
-        <div>Estimated diameter: {info.diameter.toFixed(1)} mm</div>
-        <div>Estimated depth: {info.depth.toFixed(1)} mm</div>
-        <div>Thickness: {safeThickness}</div>
-        <div>Triangle count: {info.triCount}</div>
-      </div>
-
-      <div style={{ width: "min(92vw, 760px)", height: "min(64vh, 620px)" }}>
+      <div className="scene-wrap">
+        <div className="export-ghost">
+          <div>SEED {seedText}</div>
+          <div>DIAMETER {info.diameter.toFixed(1)} MM</div>
+          <div>DEPTH {info.depth.toFixed(1)} MM</div>
+          <div>THICKNESS {safeThickness}</div>
+          <div>TRIANGLES {info.triCount}</div>
+        </div>
         <Canvas camera={{ position: [0, 0, 190], fov: 36 }}>
-          <color attach="background" args={["#f5f7fb"]} />
+          <color attach="background" args={["#f3f8fd"]} />
           <ambientLight intensity={0.72} />
           <directionalLight position={[150, 120, 120]} intensity={0.85} />
           <mesh ref={meshRef} geometry={meshGeometry}>
@@ -269,6 +353,10 @@ export default function App() {
           <OrbitControls enablePan={false} />
         </Canvas>
       </div>
+
+      <button className="btn btn-export" type="button" onClick={handleExport}>
+        Export STL
+      </button>
     </div>
   );
 }
