@@ -330,8 +330,9 @@ export default function App() {
         }
         .brand {
           display: flex;
+          flex-direction: column;
           align-items: center;
-          gap: 0.8rem;
+          gap: 0.35rem;
         }
         .brand-logo {
           width: clamp(56px, 8vw, 84px);
@@ -371,8 +372,18 @@ export default function App() {
           text-align: center;
           align-items: center;
         }
+        .field-inline {
+          flex-direction: row;
+          justify-content: center;
+          align-items: center;
+          gap: 0.7rem;
+        }
+        .field-inline .field-label {
+          min-width: 120px;
+          text-align: right;
+        }
         .field input[type="text"] {
-          width: min(100%, 520px);
+          width: min(100%, 260px);
           border: 1px solid rgba(28, 67, 95, 0.24);
           border-radius: 10px;
           padding: 0.52rem 0.62rem;
@@ -538,6 +549,14 @@ export default function App() {
         }
         @media (max-width: 740px) {
           .control-grid { grid-template-columns: minmax(220px, 1fr); }
+          .field-inline {
+            flex-direction: column;
+            gap: 0.3rem;
+          }
+          .field-inline .field-label {
+            min-width: 0;
+            text-align: center;
+          }
           .scene-wrap { height: min(60vh, 520px); }
           .export-ghost { font-size: 0.95rem; max-width: 72vw; }
         }
@@ -549,8 +568,8 @@ export default function App() {
           <h1 className="title">Snowflake Studio</h1>
         </div>
         <div className="control-grid">
-          <label className="field">
-            First Name
+          <label className="field field-inline">
+            <span className="field-label">First Name</span>
             <input
               type="text"
               value={firstName}
@@ -558,8 +577,8 @@ export default function App() {
               onKeyDown={handleNameKeyDown}
             />
           </label>
-          <label className="field">
-            Last Name
+          <label className="field field-inline">
+            <span className="field-label">Last Name</span>
             <input
               type="text"
               value={lastName}
