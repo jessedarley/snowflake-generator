@@ -212,13 +212,13 @@ export default function App() {
     []
   );
 
-  const [nameOrPhrase, setNameOrPhrase] = useState("Ada Lovelace");
+  const [nameOrPhrase, setNameOrPhrase] = useState("Ice to meet you");
   const [complexityLevel, setComplexityLevel] = useState(1);
   const [thicknessLevel, setThicknessLevel] = useState(1);
   const [sizeLevel, setSizeLevel] = useState(2);
 
   const [generated, setGenerated] = useState({
-    nameOrPhrase: "Ada Lovelace",
+    nameOrPhrase: "Ice to meet you",
     complexity: COMPLEXITY_VALUES[1],
     thickness: THICKNESS_VALUES[1],
     complexityLevel: 1,
