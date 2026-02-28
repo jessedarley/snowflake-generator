@@ -212,15 +212,13 @@ export default function App() {
     []
   );
 
-  const [firstName, setFirstName] = useState("Ada");
-  const [lastName, setLastName] = useState("Lovelace");
+  const [nameOrPhrase, setNameOrPhrase] = useState("Ada Lovelace");
   const [complexityLevel, setComplexityLevel] = useState(1);
   const [thicknessLevel, setThicknessLevel] = useState(1);
   const [sizeLevel, setSizeLevel] = useState(2);
 
   const [generated, setGenerated] = useState({
-    firstName: "Ada",
-    lastName: "Lovelace",
+    nameOrPhrase: "Ada Lovelace",
     complexity: COMPLEXITY_VALUES[1],
     thickness: THICKNESS_VALUES[1],
     complexityLevel: 1,
@@ -229,7 +227,7 @@ export default function App() {
   });
 
   const safeThickness = Math.max(2, Math.min(20, generated.thickness));
-  const seedText = `${generated.firstName.trim()}|${generated.lastName.trim()}|${generated.complexity}|${safeThickness}`;
+  const seedText = `${generated.nameOrPhrase.trim()}|${generated.complexity}|${safeThickness}`;
   const seed = useMemo(() => seedFromString(seedText), [seedText]);
 
   const meshGeometry = useMemo(
@@ -259,8 +257,7 @@ export default function App() {
 
   const handleRegenerate = () => {
     setGenerated({
-      firstName,
-      lastName,
+      nameOrPhrase,
       complexity: COMPLEXITY_VALUES[complexityLevel],
       thickness: THICKNESS_VALUES[thicknessLevel],
       complexityLevel,
@@ -284,7 +281,7 @@ export default function App() {
     const complexityLevel = Math.max(1, Math.min(3, (generated.complexityLevel ?? 1) + 1));
     const thicknessLevel = Math.max(1, Math.min(3, (generated.thicknessLevel ?? 1) + 1));
     const sizeSuffix = `${Math.round(generated.sizeInches || 3)}in`;
-    const file = `snowflake_${sanitizeNamePart(generated.firstName)}_${sanitizeNamePart(generated.lastName)}_c${complexityLevel}_t${thicknessLevel}_${sizeSuffix}.stl`;
+    const file = `snowflake_${sanitizeNamePart(generated.nameOrPhrase)}_c${complexityLevel}_t${thicknessLevel}_${sizeSuffix}.stl`;
     exportMeshToStl(meshRef.current, file);
   };
 
@@ -383,7 +380,7 @@ export default function App() {
           text-align: right;
         }
         .field input[type="text"] {
-          width: min(100%, 260px);
+          width: min(100%, 195px);
           border: 1px solid rgba(28, 67, 95, 0.24);
           border-radius: 10px;
           padding: 0.52rem 0.62rem;
@@ -569,20 +566,12 @@ export default function App() {
         </div>
         <div className="control-grid">
           <label className="field field-inline">
-            <span className="field-label">First Name</span>
+            <span className="field-label">Name or Phrase</span>
             <input
               type="text"
-              value={firstName}
-              onChange={(e) => setFirstName(e.target.value)}
-              onKeyDown={handleNameKeyDown}
-            />
-          </label>
-          <label className="field field-inline">
-            <span className="field-label">Last Name</span>
-            <input
-              type="text"
-              value={lastName}
-              onChange={(e) => setLastName(e.target.value)}
+              value={nameOrPhrase}
+              onChange={(e) => setNameOrPhrase(e.target.value)}
+              onFocus={() => setNameOrPhrase("")}
               onKeyDown={handleNameKeyDown}
             />
           </label>
@@ -648,14 +637,9 @@ export default function App() {
         </div>
         <div className="export-ghost">
           <div className="export-row">
-            <span className="export-key">FIRST NAME</span>
+            <span className="export-key">NAME OR PHRASE</span>
             <span className="export-colon">:</span>
-            <span className="export-value">{generated.firstName.trim() || "—"}</span>
-          </div>
-          <div className="export-row">
-            <span className="export-key">LAST NAME</span>
-            <span className="export-colon">:</span>
-            <span className="export-value">{generated.lastName.trim() || "—"}</span>
+            <span className="export-value">{generated.nameOrPhrase.trim() || "—"}</span>
           </div>
           <div className="export-row">
             <span className="export-key">COMPLEXITY</span>
