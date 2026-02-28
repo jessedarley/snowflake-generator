@@ -37,6 +37,13 @@ function addPolarSegment(segments, start, angle, length) {
   return end;
 }
 
+function clampToArmWedge(angle, sideSign, maxOffAxis) {
+  if (sideSign >= 0) {
+    return Math.max(0, Math.min(maxOffAxis, angle));
+  }
+  return Math.min(0, Math.max(-maxOffAxis, angle));
+}
+
 export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
   const next = typeof rand === "function" ? rand : () => 0;
   const levels = Math.max(1, Math.min(10, Math.round(complexity)));
@@ -45,6 +52,7 @@ export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
   const minFeature = 0.06;
 
   const arm = [];
+  const maxOffAxis = Math.PI / 6 - 0.02;
   const nodeCount = levels + 8;
   const mainLength = 3 + levels * 0.42;
   const stepBase = mainLength / (nodeCount - 1);
@@ -59,8 +67,12 @@ export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
   }
 
   // Reinforce the primary spine with mirrored rails so the main arms are not too spindly.
-  const railOffset = 0.07 + thicknessNorm * 0.06;
+  const railOffset = 0.03 + thicknessNorm * 0.025;
+  const railStartIndex = Math.max(1, Math.floor(nodeCount * 0.34));
   for (let i = 1; i < nodeCount; i += 1) {
+    if (i < railStartIndex || i % 2 === 1) {
+      continue;
+    }
     const a = nodes[i - 1];
     const b = nodes[i];
     addSegment(arm, [a[0], railOffset], [b[0], railOffset]);
@@ -70,7 +82,8 @@ export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
   for (let i = 1; i < nodeCount - 1; i += 1) {
     const t = i / (nodeCount - 1);
     const p = nodes[i];
-    if (t < 0.28 || t > 0.97) {
+    const innerStart = 0.28 + Math.max(0, levels - 6) * 0.03;
+    if (t < innerStart || t > 0.97) {
       continue;
     }
 
@@ -86,7 +99,7 @@ export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
     const innerLengthBoost = t < 0.45 ? 0.62 : 1;
     const branchLen = Math.max(
       minFeature,
-      (0.54 + levels * 0.118) * branchScale * (0.95 + next() * 0.42) * innerLengthBoost
+      (0.46 + levels * 0.1) * branchScale * (0.9 + next() * 0.28) * innerLengthBoost
     );
 
     const addTwig = next() < 0.86;
@@ -95,7 +108,7 @@ export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
     for (let k = 0; k < twigCount; k += 1) {
       twigParams.push({
         dirScale: 0.42 + next() * 0.25,
-        lenScale: (0.2 + next() * 0.18) * (1 - k * 0.14),
+        lenScale: (0.14 + next() * 0.11) * (1 - k * 0.16),
         along: 0.38 + 0.5 * next(),
       });
     }
@@ -111,13 +124,14 @@ export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
     }
 
     const makeSide = (sideSign) => {
-      const branchAngle = sideSign * baseBranchAngle;
+      const branchAngle = clampToArmWedge(sideSign * baseBranchAngle, sideSign, maxOffAxis);
       const branchEnd = addPolarSegment(arm, p, branchAngle, branchLen);
 
       if (addTwig) {
         for (let k = 0; k < twigParams.length; k += 1) {
           const params = twigParams[k];
-          const dir = branchAngle + sideSign * (Math.PI / 2) * params.dirScale;
+          const rawDir = branchAngle + sideSign * (Math.PI / 2) * params.dirScale;
+          const dir = clampToArmWedge(rawDir, sideSign, maxOffAxis);
           const twigLen = Math.max(
             minFeature,
             branchLen * params.lenScale
@@ -133,7 +147,11 @@ export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
       if (addPlates) {
         for (let n = 0; n < plateParams.length; n += 1) {
           const params = plateParams[n];
-          const ridgeAngle = branchAngle + sideSign * (Math.PI / 2);
+          const ridgeAngle = clampToArmWedge(
+            branchAngle + sideSign * (Math.PI / 2),
+            sideSign,
+            maxOffAxis
+          );
           const base = [
             p[0] + (branchEnd[0] - p[0]) * params.baseAlong,
             p[1] + (branchEnd[1] - p[1]) * params.baseAlong,
@@ -141,6 +159,21 @@ export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
           const ridgeLen = Math.max(minFeature, branchLen * params.ridgeLenScale);
           addPolarSegment(arm, base, ridgeAngle, ridgeLen);
         }
+      }
+
+      // Add short trailing barbs for a softer, feathery crystal edge.
+      const featherCount = 2 + (next() < 0.45 ? 1 : 0);
+      for (let f = 0; f < featherCount; f += 1) {
+        const along = 0.26 + f * 0.24 + next() * 0.08;
+        const featherBase = [
+          p[0] + (branchEnd[0] - p[0]) * along,
+          p[1] + (branchEnd[1] - p[1]) * along,
+        ];
+        const rawFeatherDir =
+          branchAngle - sideSign * (Math.PI / 5.8) * (0.85 + next() * 0.22);
+        const featherDir = clampToArmWedge(rawFeatherDir, sideSign, maxOffAxis);
+        const featherLen = Math.max(minFeature, branchLen * (0.08 + next() * 0.06));
+        addPolarSegment(arm, featherBase, featherDir, featherLen);
       }
     };
 
@@ -151,9 +184,9 @@ export function buildSnowflake2D(rand, complexity = 5, thickness = 10) {
   const tip = nodes[nodes.length - 1];
   const tipScale = 0.32 + levels * 0.022;
   const tipLen = Math.max(minFeature, tipScale);
-  addPolarSegment(arm, tip, Math.PI * 0.74, tipLen);
-  addPolarSegment(arm, tip, -Math.PI * 0.74, tipLen);
-  addPolarSegment(arm, tip, Math.PI, tipLen * 0.44);
+  addPolarSegment(arm, tip, Math.PI * 0.74, tipLen * 0.62);
+  addPolarSegment(arm, tip, -Math.PI * 0.74, tipLen * 0.62);
+  addPolarSegment(arm, tip, Math.PI, tipLen * 0.3);
 
   const segments = [];
   for (let i = 0; i < 6; i += 1) {

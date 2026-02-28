@@ -1,38 +1,143 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Canvas } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { buildSnowflake2D, mulberry32, seedFromString } from "./geometry.js";
 import { buildSnowflakeMeshFromSegments } from "./snowflake/sdfOutline.js";
 import logo from "./assets/logo.png";
 
 const SHOW_HALF_ONE_BRANCH = false;
+const COMPLEXITY_LABELS = ["Low", "Medium", "High"];
+const THICKNESS_LABELS = ["Thin", "Medium", "Thick"];
+const COMPLEXITY_VALUES = [3, 6, 9];
+const THICKNESS_VALUES = [4, 10, 16];
+const SIZE_VALUES_IN = [1, 2, 3, 4, 5];
+const MM_PER_IN = 25.4;
+
+function labelFromLevel(labels, index) {
+  return labels[Math.max(0, Math.min(labels.length - 1, index))];
+}
 
 function sanitizeNamePart(value) {
   const safe = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
   return safe.replace(/^_+|_+$/g, "") || "anon";
 }
 
-function makeSnowflakeMeshGeometry(seed, complexity, thickness) {
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function angleInWedge(theta, halfAngle) {
+  let t = theta;
+  while (t > Math.PI) t -= Math.PI * 2;
+  while (t < -Math.PI) t += Math.PI * 2;
+  return Math.abs(t) <= halfAngle;
+}
+
+function distanceSegmentToOrigin(a, b) {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const ab2 = abx * abx + aby * aby;
+  if (ab2 < 1e-12) return Math.hypot(a[0], a[1]);
+  const t = clamp((-(a[0] * abx + a[1] * aby)) / ab2, 0, 1);
+  const cx = a[0] + abx * t;
+  const cy = a[1] + aby * t;
+  return Math.hypot(cx, cy);
+}
+
+function buildCoreMaskParams(seed, thickness, complexity) {
+  const coreRand = mulberry32((seed ^ 0x45d9f3b) >>> 0);
+  const baseR = 1.05 + thickness * 0.04 + Math.max(0, complexity - 6) * 0.16;
+  const useHex = coreRand() < 0.32;
+  return {
+    useHex,
+    baseR,
+    phase: coreRand() * Math.PI * 2,
+    amp1: 0.08 + coreRand() * 0.12,
+    amp2: 0.02 + coreRand() * 0.06,
+    skew: (coreRand() - 0.5) * 0.22,
+  };
+}
+
+function coreRadiusAtAngle(theta, params) {
+  if (params.useHex) {
+    const t = theta + params.phase;
+    const hex = 1 / Math.max(0.4, Math.cos((Math.PI / 6) - ((t + Math.PI * 8) % (Math.PI / 3))));
+    return params.baseR * (0.86 + params.amp1 * 0.7) * hex * 0.62;
+  }
+  const t = theta + params.phase;
+  const six = Math.cos(6 * (t + params.skew));
+  const twelve = Math.cos(12 * t + params.skew * 1.7);
+  const scale = 1 + params.amp1 * six + params.amp2 * twelve;
+  return params.baseR * 0.94 * scale;
+}
+
+function segmentOutsideCoreMask(a, b, params, margin) {
+  const m = [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5];
+  const samples = [a, m, b];
+  for (let i = 0; i < samples.length; i += 1) {
+    const p = samples[i];
+    const r = Math.hypot(p[0], p[1]);
+    const theta = Math.atan2(p[1], p[0]);
+    const minR = coreRadiusAtAngle(theta, params) + margin;
+    if (r < minR) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function makeSnowflakeMeshGeometry(seed, complexity, thickness, sizeInches) {
   const rand = mulberry32(seed);
   const safeThickness = Math.max(2, Math.min(20, Number(thickness) || 10));
   const geometry2d = buildSnowflake2D(rand, complexity, safeThickness);
+  const wedgeHalfAngle = Math.PI / 6;
+  const wedgeMargin = 0.11;
+  const coreMaskParams = buildCoreMaskParams(seed, safeThickness, complexity);
+  const coreMargin = 0.22 + safeThickness * 0.01 + Math.max(0, complexity - 6) * 0.06;
   const branchHalfSegments = geometry2d.segments.filter(([a, b]) => {
     const mx = (a[0] + b[0]) * 0.5;
     const my = (a[1] + b[1]) * 0.5;
     const theta = Math.atan2(my, mx);
-    const inSingleBranch = Math.abs(theta) <= Math.PI / 6;
+    const inSingleBranch = angleInWedge(theta, Math.PI / 6);
     const inUpperHalf = my >= -1e-6;
     return inSingleBranch && inUpperHalf;
   });
-  const sourceSegments = SHOW_HALF_ONE_BRANCH ? branchHalfSegments : geometry2d.segments;
-  const merged = buildSnowflakeMeshFromSegments(sourceSegments, safeThickness);
+  const branchWedgeSegments = geometry2d.segments.filter(([a, b]) => {
+    const ta = Math.atan2(a[1], a[0]);
+    const tb = Math.atan2(b[1], b[0]);
+    const insideWedge =
+      angleInWedge(ta, wedgeHalfAngle - wedgeMargin) &&
+      angleInWedge(tb, wedgeHalfAngle - wedgeMargin);
+    const outsideCore =
+      segmentOutsideCoreMask(a, b, coreMaskParams, coreMargin) &&
+      distanceSegmentToOrigin(a, b) >= 0.95;
+    return insideWedge && outsideCore;
+  });
+
+  let merged;
+  if (SHOW_HALF_ONE_BRANCH) {
+    merged = buildSnowflakeMeshFromSegments(branchHalfSegments, safeThickness);
+  } else {
+    const wedgeGeometry = buildSnowflakeMeshFromSegments(branchWedgeSegments, safeThickness);
+    const parts = [];
+    for (let i = 0; i < 6; i += 1) {
+      const part = wedgeGeometry.clone();
+      part.applyMatrix4(new THREE.Matrix4().makeRotationZ((i * Math.PI) / 3));
+      parts.push(part);
+    }
+    merged = mergeGeometries(parts, true);
+    wedgeGeometry.dispose();
+    parts.forEach((p) => p.dispose());
+  }
+
   const box = merged.boundingBox || new THREE.Box3().setFromBufferAttribute(merged.attributes.position);
   const size = new THREE.Vector3();
   box.getSize(size);
   const baseDiameterXY = Math.max(size.x, size.y, 1e-6);
-  const targetDiameterMm = 110;
+  const targetDiameterMm = Math.max(1, Number(sizeInches) || 3) * MM_PER_IN;
   const targetDepthMm = targetDiameterMm / 20;
   const scaleXY = targetDiameterMm / baseDiameterXY;
 
@@ -86,14 +191,18 @@ export default function App() {
 
   const [firstName, setFirstName] = useState("Ada");
   const [lastName, setLastName] = useState("Lovelace");
-  const [complexity, setComplexity] = useState(6);
-  const [thickness, setThickness] = useState(10);
+  const [complexityLevel, setComplexityLevel] = useState(1);
+  const [thicknessLevel, setThicknessLevel] = useState(1);
+  const [sizeLevel, setSizeLevel] = useState(2);
 
   const [generated, setGenerated] = useState({
     firstName: "Ada",
     lastName: "Lovelace",
-    complexity: 6,
-    thickness: 10,
+    complexity: COMPLEXITY_VALUES[1],
+    thickness: THICKNESS_VALUES[1],
+    complexityLevel: 1,
+    thicknessLevel: 1,
+    sizeInches: SIZE_VALUES_IN[2],
   });
 
   const safeThickness = Math.max(2, Math.min(20, generated.thickness));
@@ -101,8 +210,14 @@ export default function App() {
   const seed = useMemo(() => seedFromString(seedText), [seedText]);
 
   const meshGeometry = useMemo(
-    () => makeSnowflakeMeshGeometry(seed, generated.complexity, safeThickness),
-    [seed, generated.complexity, safeThickness]
+    () =>
+      makeSnowflakeMeshGeometry(
+        seed,
+        generated.complexity,
+        safeThickness,
+        generated.sizeInches
+      ),
+    [seed, generated.complexity, safeThickness, generated.sizeInches]
   );
 
   const info = useMemo(() => {
@@ -119,29 +234,25 @@ export default function App() {
     return { diameter, depth, triCount };
   }, [meshGeometry]);
 
-  const commitNames = () => {
-    setGenerated((prev) => ({
-      ...prev,
+  const handleRegenerate = () => {
+    setGenerated({
       firstName,
       lastName,
-    }));
+      complexity: COMPLEXITY_VALUES[complexityLevel],
+      thickness: THICKNESS_VALUES[thicknessLevel],
+      complexityLevel,
+      thicknessLevel,
+      sizeInches: SIZE_VALUES_IN[sizeLevel],
+    });
   };
 
   const handleNameKeyDown = (e) => {
     if (e.key === "Enter") {
       e.preventDefault();
-      commitNames();
+      handleRegenerate();
       e.currentTarget.blur();
     }
   };
-
-  useEffect(() => {
-    setGenerated((prev) => ({
-      ...prev,
-      complexity: Math.max(1, Math.min(10, Number(complexity) || 1)),
-      thickness: Math.max(2, Math.min(20, Number(thickness) || 2)),
-    }));
-  }, [complexity, thickness]);
 
   const handleExport = () => {
     if (!meshRef.current) {
@@ -155,13 +266,14 @@ export default function App() {
     <div className="app-shell">
       <style>{`
         :root {
-          --ice-0: #f4f9ff;
-          --ice-1: #e8f1fb;
-          --ice-2: #d8e8f5;
+          --ice-0: #0f3b66;
+          --ice-1: #2f5f8f;
+          --ice-2: #d6e8f7;
           --ice-3: #96adc2;
           --night-0: #0d1c2a;
           --night-1: #143247;
           --frost: #f7fbff;
+          --logo-blue: #33429b;
         }
         * { box-sizing: border-box; }
         .app-shell {
@@ -172,22 +284,34 @@ export default function App() {
           align-items: center;
           gap: 1.1rem;
           padding: 1.2rem;
-          color: var(--night-0);
-          font-family: "Avenir Next", "Segoe UI", "Trebuchet MS", sans-serif;
+          color: var(--logo-blue);
+          font-family: "Cinzel", "Palatino Linotype", "Book Antiqua", serif;
           background:
-            radial-gradient(circle at 18% 16%, rgba(255,255,255,0.75), transparent 28%),
-            radial-gradient(circle at 86% 4%, rgba(180, 208, 232, 0.36), transparent 26%),
-            repeating-linear-gradient(115deg, rgba(255,255,255,0.26) 0, rgba(255,255,255,0.26) 1px, transparent 1px, transparent 10px),
-            linear-gradient(155deg, var(--ice-0) 0%, var(--ice-1) 44%, var(--ice-2) 100%);
+            radial-gradient(circle at 20% 10%, rgba(255,255,255,0.18), transparent 34%),
+            radial-gradient(circle at 84% 6%, rgba(200, 230, 255, 0.2), transparent 28%),
+            repeating-linear-gradient(115deg, rgba(255,255,255,0.1) 0, rgba(255,255,255,0.1) 1px, transparent 1px, transparent 12px),
+            linear-gradient(155deg, var(--ice-0) 0%, var(--ice-1) 42%, var(--ice-2) 100%);
         }
         .title {
-          margin: 0.1rem 0 0;
+          margin: 0;
           text-align: center;
           letter-spacing: 0.04em;
           font-size: clamp(1.35rem, 2.4vw, 2rem);
           font-weight: 650;
-          color: var(--night-1);
+          color: var(--logo-blue);
           text-transform: uppercase;
+          font-family: "Cinzel", "Palatino Linotype", "Book Antiqua", serif;
+        }
+        .header-card {
+          width: min(94vw, 860px);
+          padding: 0.85rem 0.95rem;
+          border: 1px solid rgba(20, 50, 71, 0.12);
+          border-radius: 16px;
+          backdrop-filter: blur(2px);
+          background: linear-gradient(180deg, rgba(247, 251, 255, 0.84), rgba(247, 251, 255, 0.62));
+          box-shadow: 0 8px 26px rgba(7, 27, 43, 0.08);
+          display: flex;
+          justify-content: center;
         }
         .brand {
           display: flex;
@@ -199,13 +323,13 @@ export default function App() {
           height: clamp(56px, 8vw, 84px);
           object-fit: cover;
           object-position: 50% 24%;
-          border-radius: 14px;
-          border: 1px solid rgba(14, 58, 85, 0.18);
-          background: rgba(255, 255, 255, 0.7);
-          box-shadow: 0 6px 16px rgba(6, 31, 48, 0.1);
+          border-radius: 0;
+          border: none;
+          background: transparent;
+          box-shadow: none;
         }
         .controls {
-          width: min(100%, 760px);
+          width: min(94vw, 860px);
           padding: 0.95rem;
           border: 1px solid rgba(20, 50, 71, 0.12);
           border-radius: 16px;
@@ -215,23 +339,26 @@ export default function App() {
         }
         .control-grid {
           display: grid;
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          gap: 0.8rem 0.95rem;
+          grid-template-columns: minmax(260px, 520px);
+          justify-content: center;
+          gap: 0.8rem;
         }
         .field {
           display: flex;
           flex-direction: column;
           gap: 0.3rem;
           font-size: 0.86rem;
-          color: #27475e;
+          color: var(--logo-blue);
+          text-align: center;
+          align-items: center;
         }
         .field input[type="text"] {
-          width: 100%;
+          width: min(100%, 520px);
           border: 1px solid rgba(28, 67, 95, 0.24);
           border-radius: 10px;
           padding: 0.52rem 0.62rem;
           background: rgba(255,255,255,0.86);
-          color: #10283c;
+          color: var(--logo-blue);
           outline: none;
         }
         .field input[type="text"]:focus {
@@ -239,8 +366,62 @@ export default function App() {
           box-shadow: 0 0 0 2px rgba(111, 149, 179, 0.18);
         }
         .field input[type="range"] {
-          width: 100%;
-          accent-color: #4e7593;
+          width: min(100%, 520px);
+          -webkit-appearance: none;
+          appearance: none;
+          height: 22px;
+          background: transparent;
+          cursor: pointer;
+        }
+        .field input[type="range"]::-webkit-slider-runnable-track {
+          height: 6px;
+          border-radius: 999px;
+          background: linear-gradient(90deg, #33429b, #33429b);
+          border: 1px solid rgba(51, 66, 155, 0.25);
+        }
+        .field input[type="range"]::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 22px;
+          height: 22px;
+          margin-top: -9px;
+          border: none;
+          background: #33429b;
+          clip-path: polygon(
+            50% 0%,
+            58% 34%,
+            93% 50%,
+            58% 66%,
+            50% 100%,
+            42% 66%,
+            7% 50%,
+            42% 34%
+          );
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
+        }
+        .field input[type="range"]::-moz-range-track {
+          height: 6px;
+          border-radius: 999px;
+          background: #33429b;
+          border: 1px solid rgba(51, 66, 155, 0.25);
+        }
+        .field input[type="range"]::-moz-range-thumb {
+          width: 22px;
+          height: 22px;
+          border: none;
+          border-radius: 0;
+          background: #33429b;
+          clip-path: polygon(
+            50% 0%,
+            58% 34%,
+            93% 50%,
+            58% 66%,
+            50% 100%,
+            42% 66%,
+            7% 50%,
+            42% 34%
+          );
+          box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55);
         }
         .btn {
           border: none;
@@ -251,7 +432,7 @@ export default function App() {
           cursor: pointer;
         }
         .btn-export {
-          color: #153147;
+          color: var(--logo-blue);
           background: linear-gradient(145deg, #d8e8f5, #ecf5fc);
           border: 1px solid rgba(21, 49, 71, 0.15);
         }
@@ -261,9 +442,9 @@ export default function App() {
           position: relative;
           border-radius: 20px;
           overflow: hidden;
-          border: 1px solid rgba(19, 53, 77, 0.15);
-          background: linear-gradient(165deg, rgba(247, 251, 255, 0.58), rgba(230, 240, 250, 0.36));
-          box-shadow: inset 0 0 50px rgba(255,255,255,0.36), 0 10px 34px rgba(8, 32, 49, 0.12);
+          border: none;
+          background: transparent;
+          box-shadow: none;
         }
         .export-ghost {
           position: absolute;
@@ -273,21 +454,43 @@ export default function App() {
           pointer-events: none;
           font-size: 0.74rem;
           line-height: 1.35;
-          color: rgba(13, 28, 42, 0.34);
-          text-align: right;
+          color: rgba(46, 143, 190, 0.62);
           text-shadow: 0 1px rgba(255,255,255,0.35);
           user-select: none;
+          display: flex;
+          flex-direction: column;
+          gap: 0.08rem;
+        }
+        .export-row {
+          display: grid;
+          grid-template-columns: auto auto 1fr;
+          align-items: baseline;
+          justify-items: center;
+          column-gap: 0.2rem;
+        }
+        .export-key {
+          justify-self: end;
+          letter-spacing: 0.02em;
+        }
+        .export-colon {
+          width: 0.5rem;
+          text-align: center;
+        }
+        .export-value {
+          justify-self: start;
         }
         @media (max-width: 740px) {
-          .control-grid { grid-template-columns: 1fr; }
+          .control-grid { grid-template-columns: minmax(220px, 1fr); }
           .scene-wrap { height: min(60vh, 520px); }
           .export-ghost { font-size: 0.69rem; max-width: 68vw; }
         }
       `}</style>
 
-      <div className="brand">
-        <img className="brand-logo" src={logo} alt="Snowflake Generator logo" />
-        <h1 className="title">Winter Snowflake Studio</h1>
+      <div className="header-card">
+        <div className="brand">
+          <img className="brand-logo" src={logo} alt="Snowflake Generator logo" />
+          <h1 className="title">Winter Snowflake Studio</h1>
+        </div>
       </div>
 
       <section className="controls">
@@ -298,7 +501,6 @@ export default function App() {
               type="text"
               value={firstName}
               onChange={(e) => setFirstName(e.target.value)}
-              onBlur={commitNames}
               onKeyDown={handleNameKeyDown}
             />
           </label>
@@ -308,40 +510,93 @@ export default function App() {
               type="text"
               value={lastName}
               onChange={(e) => setLastName(e.target.value)}
-              onBlur={commitNames}
               onKeyDown={handleNameKeyDown}
             />
           </label>
           <label className="field">
-            Complexity: {complexity}
+            Complexity: {COMPLEXITY_LABELS[complexityLevel]}
             <input
               type="range"
-              min="1"
-              max="10"
-              value={complexity}
-              onChange={(e) => setComplexity(Number(e.target.value))}
+              min="0"
+              max="2"
+              step="1"
+              value={complexityLevel}
+              onChange={(e) => setComplexityLevel(Number(e.target.value))}
             />
           </label>
           <label className="field">
-            Thickness: {thickness}
+            Thickness: {THICKNESS_LABELS[thicknessLevel]}
             <input
               type="range"
-              min="1"
-              max="20"
-              value={thickness}
-              onChange={(e) => setThickness(Number(e.target.value))}
+              min="0"
+              max="2"
+              step="1"
+              value={thicknessLevel}
+              onChange={(e) => setThicknessLevel(Number(e.target.value))}
             />
           </label>
+          <label className="field">
+            Size: {SIZE_VALUES_IN[sizeLevel]} in
+            <input
+              type="range"
+              min="0"
+              max="4"
+              step="1"
+              value={sizeLevel}
+              onChange={(e) => setSizeLevel(Number(e.target.value))}
+            />
+          </label>
+        </div>
+        <div style={{ marginTop: "0.72rem", display: "flex", justifyContent: "center" }}>
+          <button className="btn btn-export" type="button" onClick={handleRegenerate}>
+            Let it snow!
+          </button>
         </div>
       </section>
 
       <div className="scene-wrap">
         <div className="export-ghost">
-          <div>SEED {seedText}</div>
-          <div>DIAMETER {info.diameter.toFixed(1)} MM</div>
-          <div>DEPTH {info.depth.toFixed(1)} MM</div>
-          <div>THICKNESS {safeThickness}</div>
-          <div>TRIANGLES {info.triCount}</div>
+          <div className="export-row">
+            <span className="export-key">FIRST NAME</span>
+            <span className="export-colon">:</span>
+            <span className="export-value">{generated.firstName.trim() || "—"}</span>
+          </div>
+          <div className="export-row">
+            <span className="export-key">LAST NAME</span>
+            <span className="export-colon">:</span>
+            <span className="export-value">{generated.lastName.trim() || "—"}</span>
+          </div>
+          <div className="export-row">
+            <span className="export-key">COMPLEXITY</span>
+            <span className="export-colon">:</span>
+            <span className="export-value">
+              {labelFromLevel(COMPLEXITY_LABELS, generated.complexityLevel)}
+            </span>
+          </div>
+          <div className="export-row">
+            <span className="export-key">THICKNESS</span>
+            <span className="export-colon">:</span>
+            <span className="export-value">
+              {labelFromLevel(THICKNESS_LABELS, generated.thicknessLevel)}
+            </span>
+          </div>
+          <div className="export-row">
+            <span className="export-key">SIZE</span>
+            <span className="export-colon">:</span>
+            <span className="export-value">{(info.diameter / MM_PER_IN).toFixed(2)} in</span>
+          </div>
+          <div className="export-row">
+            <span className="export-key">DEPTH</span>
+            <span className="export-colon">:</span>
+            <span className="export-value">{(info.depth / MM_PER_IN).toFixed(2)} in</span>
+          </div>
+          <div className="export-row">
+            <span className="export-key">TRIANGLES</span>
+            <span className="export-colon">:</span>
+            <span className="export-value">
+              {info.triCount}
+            </span>
+          </div>
         </div>
         <Canvas camera={{ position: [0, 0, 190], fov: 36 }}>
           <color attach="background" args={["#f3f8fd"]} />
