@@ -511,6 +511,12 @@ export default function App() {
           inset: 0;
           z-index: 2;
         }
+        .scene-export-btn {
+          position: absolute;
+          left: 0.8rem;
+          top: 0.8rem;
+          z-index: 4;
+        }
         .export-ghost {
           position: absolute;
           left: 0.8rem;
@@ -618,6 +624,9 @@ export default function App() {
       </section>
 
       <div className="scene-wrap">
+        <button className="btn btn-export scene-export-btn" type="button" onClick={handleExport}>
+          Export STL
+        </button>
         <div className="scene-snow" aria-hidden="true">
           {snowParticles.map((flake) => (
             <span
@@ -690,10 +699,6 @@ export default function App() {
           <OrbitControls enablePan={false} />
         </Canvas>
       </div>
-
-      <button className="btn btn-export" type="button" onClick={handleExport}>
-        Export STL
-      </button>
     </div>
   );
 }
