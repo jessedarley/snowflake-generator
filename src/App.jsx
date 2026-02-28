@@ -258,7 +258,10 @@ export default function App() {
     if (!meshRef.current) {
       return;
     }
-    const file = `snowflake_${sanitizeNamePart(generated.firstName)}_${sanitizeNamePart(generated.lastName)}_c${generated.complexity}_t${safeThickness}.stl`;
+    const complexityLevel = Math.max(1, Math.min(3, (generated.complexityLevel ?? 1) + 1));
+    const thicknessLevel = Math.max(1, Math.min(3, (generated.thicknessLevel ?? 1) + 1));
+    const sizeSuffix = `${Math.round(generated.sizeInches || 3)}in`;
+    const file = `snowflake_${sanitizeNamePart(generated.firstName)}_${sanitizeNamePart(generated.lastName)}_c${complexityLevel}_t${thicknessLevel}_${sizeSuffix}.stl`;
     exportMeshToStl(meshRef.current, file);
   };
 
@@ -359,6 +362,7 @@ export default function App() {
           padding: 0.52rem 0.62rem;
           background: rgba(255,255,255,0.86);
           color: var(--logo-blue);
+          font-family: inherit;
           outline: none;
         }
         .field input[type="text"]:focus {
