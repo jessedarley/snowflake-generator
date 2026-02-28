@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
-import { Canvas } from "@react-three/fiber";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
 import { STLExporter } from "three/examples/jsm/exporters/STLExporter.js";
@@ -186,8 +186,31 @@ function exportMeshToStl(mesh, filename) {
   baked.geometry.dispose();
 }
 
+function CameraHeadlight() {
+  const lightRef = useRef(null);
+  const { camera } = useThree();
+  useFrame(() => {
+    if (!lightRef.current) return;
+    lightRef.current.position.copy(camera.position);
+  });
+  return <pointLight ref={lightRef} intensity={2.2} distance={0} decay={0} />;
+}
+
 export default function App() {
   const meshRef = useRef(null);
+  const snowParticles = useMemo(
+    () =>
+      Array.from({ length: 128 }, (_, i) => ({
+        id: i,
+        left: ((i * 37) % 100) + "%",
+        size: 4 + (i % 5),
+        duration: 8 + (i % 7) * 1.2,
+        delay: -(i % 9) * 0.8,
+        drift: (i % 2 === 0 ? 1 : -1) * (8 + (i % 6) * 3),
+        opacity: 0.16 + (i % 4) * 0.08,
+      })),
+    []
+  );
 
   const [firstName, setFirstName] = useState("Ada");
   const [lastName, setLastName] = useState("Lovelace");
@@ -299,22 +322,11 @@ export default function App() {
           margin: 0;
           text-align: center;
           letter-spacing: 0.04em;
-          font-size: clamp(1.35rem, 2.4vw, 2rem);
+          font-size: clamp(1.7rem, 4.2vw, 2.5rem);
           font-weight: 650;
           color: var(--logo-blue);
           text-transform: uppercase;
           font-family: "Cinzel", "Palatino Linotype", "Book Antiqua", serif;
-        }
-        .header-card {
-          width: min(94vw, 860px);
-          padding: 0.85rem 0.95rem;
-          border: 1px solid rgba(20, 50, 71, 0.12);
-          border-radius: 16px;
-          backdrop-filter: blur(2px);
-          background: linear-gradient(180deg, rgba(247, 251, 255, 0.84), rgba(247, 251, 255, 0.62));
-          box-shadow: 0 8px 26px rgba(7, 27, 43, 0.08);
-          display: flex;
-          justify-content: center;
         }
         .brand {
           display: flex;
@@ -340,6 +352,10 @@ export default function App() {
           background: linear-gradient(180deg, rgba(247, 251, 255, 0.84), rgba(247, 251, 255, 0.62));
           box-shadow: 0 8px 26px rgba(7, 27, 43, 0.08);
         }
+        .controls .brand {
+          justify-content: center;
+          margin-bottom: 0.8rem;
+        }
         .control-grid {
           display: grid;
           grid-template-columns: minmax(260px, 520px);
@@ -350,7 +366,7 @@ export default function App() {
           display: flex;
           flex-direction: column;
           gap: 0.3rem;
-          font-size: 0.86rem;
+          font-size: clamp(1rem, 2.2vw, 1.16rem);
           color: var(--logo-blue);
           text-align: center;
           align-items: center;
@@ -363,6 +379,7 @@ export default function App() {
           background: rgba(255,255,255,0.86);
           color: var(--logo-blue);
           font-family: inherit;
+          font-size: clamp(1rem, 2.1vw, 1.12rem);
           outline: none;
         }
         .field input[type="text"]:focus {
@@ -433,12 +450,21 @@ export default function App() {
           padding: 0.55rem 0.98rem;
           font-weight: 650;
           letter-spacing: 0.01em;
+          font-size: clamp(1rem, 2.2vw, 1.12rem);
+          font-family: inherit;
           cursor: pointer;
         }
         .btn-export {
+          color: #ffffff;
+          background: linear-gradient(145deg, #33429b, #3f53b5);
+          border: 1px solid rgba(20, 34, 120, 0.35);
+        }
+        .button-note {
+          margin-top: 0.35rem;
+          text-align: center;
+          font-size: 0.9rem;
           color: var(--logo-blue);
-          background: linear-gradient(145deg, #d8e8f5, #ecf5fc);
-          border: 1px solid rgba(21, 49, 71, 0.15);
+          opacity: 0.85;
         }
         .scene-wrap {
           width: min(94vw, 860px);
@@ -450,16 +476,43 @@ export default function App() {
           background: transparent;
           box-shadow: none;
         }
+        .scene-snow {
+          position: absolute;
+          inset: 0;
+          z-index: 1;
+          pointer-events: none;
+          overflow: hidden;
+        }
+        .snow-dot {
+          position: absolute;
+          top: -8%;
+          border-radius: 999px;
+          background: rgba(255, 255, 255, 0.9);
+          filter: blur(0.2px);
+          animation-name: snowfall;
+          animation-timing-function: linear;
+          animation-iteration-count: infinite;
+          will-change: transform;
+        }
+        @keyframes snowfall {
+          0% { transform: translate3d(0, -10%, 0); }
+          100% { transform: translate3d(var(--drift), 115vh, 0); }
+        }
+        .scene-canvas {
+          position: absolute;
+          inset: 0;
+          z-index: 2;
+        }
         .export-ghost {
           position: absolute;
-          right: 0.8rem;
+          left: 0.8rem;
           bottom: 0.72rem;
-          z-index: 2;
+          z-index: 3;
           pointer-events: none;
-          font-size: 0.74rem;
+          font-size: clamp(0.9rem, 1.8vw, 1.05rem);
           line-height: 1.35;
-          color: rgba(46, 143, 190, 0.62);
-          text-shadow: 0 1px rgba(255,255,255,0.35);
+          color: rgba(255, 255, 255, 0.95);
+          text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
           user-select: none;
           display: flex;
           flex-direction: column;
@@ -486,18 +539,15 @@ export default function App() {
         @media (max-width: 740px) {
           .control-grid { grid-template-columns: minmax(220px, 1fr); }
           .scene-wrap { height: min(60vh, 520px); }
-          .export-ghost { font-size: 0.69rem; max-width: 68vw; }
+          .export-ghost { font-size: 0.95rem; max-width: 72vw; }
         }
       `}</style>
 
-      <div className="header-card">
+      <section className="controls">
         <div className="brand">
           <img className="brand-logo" src={logo} alt="Snowflake Generator logo" />
-          <h1 className="title">Winter Snowflake Studio</h1>
+          <h1 className="title">Snowflake Studio</h1>
         </div>
-      </div>
-
-      <section className="controls">
         <div className="control-grid">
           <label className="field">
             First Name
@@ -556,9 +606,27 @@ export default function App() {
             Let it snow!
           </button>
         </div>
+        <div className="button-note">Click to rebuild</div>
       </section>
 
       <div className="scene-wrap">
+        <div className="scene-snow" aria-hidden="true">
+          {snowParticles.map((flake) => (
+            <span
+              key={flake.id}
+              className="snow-dot"
+              style={{
+                left: flake.left,
+                width: `${flake.size}px`,
+                height: `${flake.size}px`,
+                opacity: flake.opacity,
+                animationDuration: `${flake.duration}s`,
+                animationDelay: `${flake.delay}s`,
+                "--drift": `${flake.drift}px`,
+              }}
+            />
+          ))}
+        </div>
         <div className="export-ghost">
           <div className="export-row">
             <span className="export-key">FIRST NAME</span>
@@ -602,12 +670,19 @@ export default function App() {
             </span>
           </div>
         </div>
-        <Canvas camera={{ position: [0, 0, 190], fov: 36 }}>
-          <color attach="background" args={["#f3f8fd"]} />
-          <ambientLight intensity={0.72} />
-          <directionalLight position={[150, 120, 120]} intensity={0.85} />
+        <Canvas className="scene-canvas" gl={{ alpha: true }} camera={{ position: [0, 0, 190], fov: 36 }}>
+          <ambientLight intensity={0.95} />
+          <hemisphereLight intensity={0.55} color="#ffffff" groundColor="#dbe7ff" />
+          <CameraHeadlight />
+          <directionalLight position={[0, 0, 220]} intensity={0.3} />
           <mesh ref={meshRef} geometry={meshGeometry}>
-            <meshStandardMaterial color="#dfe8ff" metalness={0.06} roughness={0.42} />
+            <meshPhongMaterial
+              color="#ffffff"
+              specular="#ffffff"
+              shininess={85}
+              emissive="#4a4a4a"
+              emissiveIntensity={0.18}
+            />
           </mesh>
           <OrbitControls enablePan={false} />
         </Canvas>
