@@ -538,10 +538,12 @@ export default function App() {
           inset: 0;
           z-index: 2;
         }
-        .preview-export-wrap {
-          grid-column: 2;
-          display: flex;
-          justify-content: center;
+        .scene-export-btn {
+          position: absolute;
+          left: 0.8rem;
+          top: 50%;
+          transform: translateY(-50%);
+          z-index: 4;
         }
         .export-ghost {
           position: absolute;
@@ -585,7 +587,6 @@ export default function App() {
         @media (max-width: 980px) {
           .layout-grid { grid-template-columns: 1fr; }
           .scene-wrap { height: min(60vh, 520px); }
-          .preview-export-wrap { grid-column: 1; }
           .brand {
             flex-direction: column;
             gap: 0.35rem;
@@ -654,6 +655,9 @@ export default function App() {
       </section>
 
       <div className="scene-wrap">
+        <button className="btn btn-export scene-export-btn" type="button" onClick={handleExport}>
+          Export STL
+        </button>
         <div className="scene-snow" aria-hidden="true">
           {snowParticles.map((flake) => (
             <span
@@ -715,12 +719,6 @@ export default function App() {
           </mesh>
           <OrbitControls enablePan={false} />
         </Canvas>
-      </div>
-
-      <div className="preview-export-wrap">
-        <button className="btn btn-export" type="button" onClick={handleExport}>
-          Export STL
-        </button>
       </div>
 
       </div>
