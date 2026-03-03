@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+﻿import React, { useMemo, useRef, useState } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import * as THREE from "three";
@@ -9,10 +9,10 @@ import { buildSnowflakeMeshFromSegments } from "./snowflake/sdfOutline.js";
 import logo from "./assets/logo.png";
 
 const SHOW_HALF_ONE_BRANCH = false;
-const COMPLEXITY_LABELS = ["Low", "Medium", "High"];
-const THICKNESS_LABELS = ["Thin", "Medium", "Thick"];
-const COMPLEXITY_VALUES = [3, 6, 9];
-const THICKNESS_VALUES = [4, 10, 16];
+const FORMATION_LABELS = ["Aurvind", "Bj\u00f8rnfrost", "Cyrnheim", "Drivsn\u00f8", "Eirfrost"];
+const FORMATION_CODES = ["A", "B", "C", "D", "E"];
+const FORMATION_COMPLEXITY_VALUES = [2, 4, 6, 8, 10];
+const DEFAULT_THICKNESS = 10;
 const SIZE_VALUES_IN = [1, 2, 3, 4, 5];
 const MM_PER_IN = 25.4;
 
@@ -198,6 +198,10 @@ function CameraHeadlight() {
 
 export default function App() {
   const meshRef = useRef(null);
+  const initialFormationLevel = useMemo(
+    () => Math.floor(Math.random() * FORMATION_LABELS.length),
+    []
+  );
   const snowParticles = useMemo(
     () =>
       Array.from({ length: 128 }, (_, i) => ({
@@ -213,16 +217,14 @@ export default function App() {
   );
 
   const [nameOrPhrase, setNameOrPhrase] = useState("Ice to meet you");
-  const [complexityLevel, setComplexityLevel] = useState(1);
-  const [thicknessLevel, setThicknessLevel] = useState(1);
+  const [formationLevel, setFormationLevel] = useState(initialFormationLevel);
   const [sizeLevel, setSizeLevel] = useState(2);
 
   const [generated, setGenerated] = useState({
     nameOrPhrase: "Ice to meet you",
-    complexity: COMPLEXITY_VALUES[1],
-    thickness: THICKNESS_VALUES[1],
-    complexityLevel: 1,
-    thicknessLevel: 1,
+    complexity: FORMATION_COMPLEXITY_VALUES[initialFormationLevel],
+    thickness: DEFAULT_THICKNESS,
+    formationLevel: initialFormationLevel,
     sizeInches: SIZE_VALUES_IN[2],
   });
 
@@ -258,10 +260,9 @@ export default function App() {
   const handleRegenerate = () => {
     setGenerated({
       nameOrPhrase,
-      complexity: COMPLEXITY_VALUES[complexityLevel],
-      thickness: THICKNESS_VALUES[thicknessLevel],
-      complexityLevel,
-      thicknessLevel,
+      complexity: FORMATION_COMPLEXITY_VALUES[formationLevel],
+      thickness: DEFAULT_THICKNESS,
+      formationLevel,
       sizeInches: SIZE_VALUES_IN[sizeLevel],
     });
   };
@@ -278,10 +279,10 @@ export default function App() {
     if (!meshRef.current) {
       return;
     }
-    const complexityLevel = Math.max(1, Math.min(3, (generated.complexityLevel ?? 1) + 1));
-    const thicknessLevel = Math.max(1, Math.min(3, (generated.thicknessLevel ?? 1) + 1));
+    const formationIndex = Math.max(0, Math.min(4, generated.formationLevel ?? 2));
+    const formationCode = FORMATION_CODES[formationIndex] || "C";
     const sizeSuffix = `${Math.round(generated.sizeInches || 3)}in`;
-    const file = `snowflake_${sanitizeNamePart(generated.nameOrPhrase)}_c${complexityLevel}_t${thicknessLevel}_${sizeSuffix}.stl`;
+    const file = `snowflake_${sanitizeNamePart(generated.nameOrPhrase)}_${formationCode}_${sizeSuffix}.stl`;
     exportMeshToStl(meshRef.current, file);
   };
 
@@ -321,15 +322,24 @@ export default function App() {
           letter-spacing: 0.04em;
           font-size: clamp(1.7rem, 4.2vw, 2.5rem);
           font-weight: 650;
-          color: var(--logo-blue);
+          color: #ffffff;
           text-transform: uppercase;
           font-family: "Cinzel", "Palatino Linotype", "Book Antiqua", serif;
         }
         .brand {
           display: flex;
-          flex-direction: column;
+          flex-direction: row;
           align-items: center;
-          gap: 0.35rem;
+          justify-content: center;
+          gap: 0.7rem;
+          width: min(96vw, 1280px);
+        }
+        .layout-grid {
+          width: min(96vw, 1280px);
+          display: grid;
+          grid-template-columns: minmax(320px, 420px) minmax(520px, 1fr);
+          gap: 1rem;
+          align-items: stretch;
         }
         .brand-logo {
           width: clamp(56px, 8vw, 84px);
@@ -342,21 +352,21 @@ export default function App() {
           box-shadow: none;
         }
         .controls {
-          width: min(94vw, 860px);
+          width: 100%;
+          height: 100%;
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
           padding: 0.95rem;
           border: 1px solid rgba(20, 50, 71, 0.12);
           border-radius: 16px;
           backdrop-filter: blur(2px);
-          background: linear-gradient(180deg, rgba(247, 251, 255, 0.84), rgba(247, 251, 255, 0.62));
+          background: linear-gradient(180deg, rgba(247, 251, 255, 0.45), rgba(247, 251, 255, 0.45));
           box-shadow: 0 8px 26px rgba(7, 27, 43, 0.08);
-        }
-        .controls .brand {
-          justify-content: center;
-          margin-bottom: 0.8rem;
         }
         .control-grid {
           display: grid;
-          grid-template-columns: minmax(260px, 520px);
+          grid-template-columns: minmax(220px, 1fr);
           justify-content: center;
           gap: 0.8rem;
         }
@@ -368,6 +378,10 @@ export default function App() {
           color: var(--logo-blue);
           text-align: center;
           align-items: center;
+        }
+        .left-label {
+          align-items: stretch;
+          text-align: left;
         }
         .field-inline {
           flex-direction: row;
@@ -389,6 +403,18 @@ export default function App() {
           font-family: inherit;
           font-size: clamp(1rem, 2.1vw, 1.12rem);
           outline: none;
+        }
+        .name-field {
+          align-items: stretch;
+          text-align: left;
+        }
+        .name-field .field-label {
+          width: 100%;
+          text-align: left;
+        }
+        .name-field input[type="text"] {
+          width: 100%;
+          max-width: none;
         }
         .field input[type="text"]:focus {
           border-color: #6f95b3;
@@ -475,8 +501,9 @@ export default function App() {
           opacity: 0.85;
         }
         .scene-wrap {
-          width: min(94vw, 860px);
+          width: 100%;
           height: min(66vh, 640px);
+          min-height: 460px;
           position: relative;
           border-radius: 20px;
           overflow: hidden;
@@ -511,16 +538,15 @@ export default function App() {
           inset: 0;
           z-index: 2;
         }
-        .scene-export-btn {
-          position: absolute;
-          left: 0.8rem;
-          top: 0.8rem;
-          z-index: 4;
+        .preview-export-wrap {
+          grid-column: 2;
+          display: flex;
+          justify-content: center;
         }
         .export-ghost {
           position: absolute;
-          left: 0.8rem;
-          bottom: 0.72rem;
+          inset: 0;
+          padding: 0.8rem;
           z-index: 3;
           pointer-events: none;
           font-size: clamp(0.9rem, 1.8vw, 1.05rem);
@@ -530,17 +556,23 @@ export default function App() {
           user-select: none;
           display: flex;
           flex-direction: column;
+          justify-content: space-between;
+          align-items: flex-start;
+        }
+        .export-meta-top,
+        .export-meta-bottom {
+          display: flex;
+          flex-direction: column;
           gap: 0.08rem;
         }
         .export-row {
           display: grid;
-          grid-template-columns: auto auto 1fr;
+          grid-template-columns: auto auto auto;
           align-items: baseline;
-          justify-items: center;
+          justify-items: start;
           column-gap: 0.2rem;
         }
         .export-key {
-          justify-self: end;
           letter-spacing: 0.02em;
         }
         .export-colon {
@@ -550,8 +582,16 @@ export default function App() {
         .export-value {
           justify-self: start;
         }
+        @media (max-width: 980px) {
+          .layout-grid { grid-template-columns: 1fr; }
+          .scene-wrap { height: min(60vh, 520px); }
+          .preview-export-wrap { grid-column: 1; }
+          .brand {
+            flex-direction: column;
+            gap: 0.35rem;
+          }
+        }
         @media (max-width: 740px) {
-          .control-grid { grid-template-columns: minmax(220px, 1fr); }
           .field-inline {
             flex-direction: column;
             gap: 0.3rem;
@@ -560,18 +600,19 @@ export default function App() {
             min-width: 0;
             text-align: center;
           }
-          .scene-wrap { height: min(60vh, 520px); }
           .export-ghost { font-size: 0.95rem; max-width: 72vw; }
         }
       `}</style>
 
+      <div className="brand">
+        <img className="brand-logo" src={logo} alt="Snowflake Generator logo" />
+        <h1 className="title">{"Sn\u00f8kryst"}</h1>
+      </div>
+
+      <div className="layout-grid">
       <section className="controls">
-        <div className="brand">
-          <img className="brand-logo" src={logo} alt="Snowflake Generator logo" />
-          <h1 className="title">Snowflake Studio</h1>
-        </div>
         <div className="control-grid">
-          <label className="field field-inline">
+          <label className="field name-field">
             <span className="field-label">Name or Phrase</span>
             <input
               type="text"
@@ -581,29 +622,18 @@ export default function App() {
               onKeyDown={handleNameKeyDown}
             />
           </label>
-          <label className="field">
-            Complexity: {COMPLEXITY_LABELS[complexityLevel]}
+          <label className="field left-label">
+            Formation: {FORMATION_LABELS[formationLevel]}
             <input
               type="range"
               min="0"
-              max="2"
+              max="4"
               step="1"
-              value={complexityLevel}
-              onChange={(e) => setComplexityLevel(Number(e.target.value))}
+              value={formationLevel}
+              onChange={(e) => setFormationLevel(Number(e.target.value))}
             />
           </label>
-          <label className="field">
-            Thickness: {THICKNESS_LABELS[thicknessLevel]}
-            <input
-              type="range"
-              min="0"
-              max="2"
-              step="1"
-              value={thicknessLevel}
-              onChange={(e) => setThicknessLevel(Number(e.target.value))}
-            />
-          </label>
-          <label className="field">
+          <label className="field left-label">
             Size: {SIZE_VALUES_IN[sizeLevel]} in
             <input
               type="range"
@@ -624,9 +654,6 @@ export default function App() {
       </section>
 
       <div className="scene-wrap">
-        <button className="btn btn-export scene-export-btn" type="button" onClick={handleExport}>
-          Export STL
-        </button>
         <div className="scene-snow" aria-hidden="true">
           {snowParticles.map((flake) => (
             <span
@@ -645,41 +672,31 @@ export default function App() {
           ))}
         </div>
         <div className="export-ghost">
-          <div className="export-row">
-            <span className="export-key">NAME OR PHRASE</span>
-            <span className="export-colon">:</span>
-            <span className="export-value">{generated.nameOrPhrase.trim() || "—"}</span>
+          <div className="export-meta-top">
+            <div className="export-row">
+              <span className="export-key">NAME OR PHRASE</span>
+              <span className="export-colon">:</span>
+              <span className="export-value">{generated.nameOrPhrase.trim() || "--"}</span>
+            </div>
+            <div className="export-row">
+              <span className="export-key">FORMATION</span>
+              <span className="export-colon">:</span>
+              <span className="export-value">
+                {labelFromLevel(FORMATION_LABELS, generated.formationLevel)}
+              </span>
+            </div>
           </div>
-          <div className="export-row">
-            <span className="export-key">COMPLEXITY</span>
-            <span className="export-colon">:</span>
-            <span className="export-value">
-              {labelFromLevel(COMPLEXITY_LABELS, generated.complexityLevel)}
-            </span>
-          </div>
-          <div className="export-row">
-            <span className="export-key">THICKNESS</span>
-            <span className="export-colon">:</span>
-            <span className="export-value">
-              {labelFromLevel(THICKNESS_LABELS, generated.thicknessLevel)}
-            </span>
-          </div>
-          <div className="export-row">
-            <span className="export-key">SIZE</span>
-            <span className="export-colon">:</span>
-            <span className="export-value">{(info.diameter / MM_PER_IN).toFixed(2)} in</span>
-          </div>
-          <div className="export-row">
-            <span className="export-key">DEPTH</span>
-            <span className="export-colon">:</span>
-            <span className="export-value">{(info.depth / MM_PER_IN).toFixed(2)} in</span>
-          </div>
-          <div className="export-row">
-            <span className="export-key">TRIANGLES</span>
-            <span className="export-colon">:</span>
-            <span className="export-value">
-              {info.triCount}
-            </span>
+          <div className="export-meta-bottom">
+            <div className="export-row">
+              <span className="export-key">SIZE</span>
+              <span className="export-colon">:</span>
+              <span className="export-value">{(info.diameter / MM_PER_IN).toFixed(2)} in</span>
+            </div>
+            <div className="export-row">
+              <span className="export-key">DEPTH</span>
+              <span className="export-colon">:</span>
+              <span className="export-value">{(info.depth / MM_PER_IN).toFixed(2)} in</span>
+            </div>
           </div>
         </div>
         <Canvas className="scene-canvas" gl={{ alpha: true }} camera={{ position: [0, 0, 190], fov: 36 }}>
@@ -698,6 +715,14 @@ export default function App() {
           </mesh>
           <OrbitControls enablePan={false} />
         </Canvas>
+      </div>
+
+      <div className="preview-export-wrap">
+        <button className="btn btn-export" type="button" onClick={handleExport}>
+          Export STL
+        </button>
+      </div>
+
       </div>
     </div>
   );
